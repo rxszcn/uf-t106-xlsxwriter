@@ -1,0 +1,4 @@
+include Changes
+include examples/*.py
+include examples/*.txt
+include examples/*.bin
