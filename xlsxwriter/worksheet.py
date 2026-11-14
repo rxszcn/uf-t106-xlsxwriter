@@ -526,6 +526,23 @@ class Worksheet(xmlwriter.XMLwriter):
         self.ignore_write_string = False
         self.embedded_images = None
 
+    def _warn_string_too_long(self, caller: str) -> None:
+        """
+        Warn that a string exceeds Excel's 32,767 character limit.
+
+        The warning message names the public write method that the caller
+        entered through so that the plain string, generic write() and rich
+        string paths all report their actual entry point.
+
+        Args:
+            caller: Name of the public write method that was called.
+
+        """
+        warn(
+            f"String length must be less than or equal to Excel's limit of "
+            f"32,767 characters in {caller}()."
+        )
+
     # Utility function for writing different types of strings.
     def _write_token_as_string(self, token, row: int, col: int, *args):
         # Map the data to the appropriate write_*() method.
@@ -560,10 +577,10 @@ class Worksheet(xmlwriter.XMLwriter):
                 # Not a number, write as a string.
                 pass
 
-            return self._write_string(row, col, *args)
+            return self._write_string(row, col, *args, caller="write")
 
         # We have a plain string.
-        return self._write_string(row, col, *args)
+        return self._write_string(row, col, *args, caller="write")
 
     @convert_cell_args
     def write(self, row: int, col: int, *args) -> Union[Literal[0, -1], Any]:
@@ -666,7 +683,7 @@ class Worksheet(xmlwriter.XMLwriter):
         # Finally try string.
         try:
             str(token)
-            return self._write_string(row, col, *args)
+            return self._write_string(row, col, *args, caller="write")
         except ValueError:
             raise TypeError(f"Unsupported type {type(token)} in write()")
 
@@ -688,12 +705,22 @@ class Worksheet(xmlwriter.XMLwriter):
             -1: Row or column is out of worksheet bounds.
             -2: String truncated to 32k characters.
 
+        A warning is raised if the string exceeds Excel's limit of 32,767
+        characters. The truncated string is still written to the cell.
+
         """
-        return self._write_string(row, col, string, cell_format)
+        return self._write_string(
+            row, col, string, cell_format, caller="write_string"
+        )
 
     # Undecorated version of write_string().
     def _write_string(
-        self, row: int, col: int, string: str, cell_format: Optional[Format] = None
+        self,
+        row: int,
+        col: int,
+        string: str,
+        cell_format: Optional[Format] = None,
+        caller: str = "write_string",
     ) -> Literal[0, -1, -2]:
         str_error = 0
 
@@ -706,6 +733,7 @@ class Worksheet(xmlwriter.XMLwriter):
         if len(string) > self.xls_strmax // 2 and _utf16_len(string) > self.xls_strmax:
             string = _utf16_truncate(string, self.xls_strmax)
             str_error = -2
+            self._warn_string_too_long(caller)
 
         # Write a shared string or an in-line string in constant_memory mode.
         if not self.constant_memory:
@@ -1432,7 +1460,9 @@ class Worksheet(xmlwriter.XMLwriter):
                 self._write_single_row(row)
 
             # Write the hyperlink string.
-            self._write_string(row, col, url.text, cell_format)
+            self._write_string(
+                row, col, url.text, cell_format, caller="write_url"
+            )
 
         # Store the hyperlink data in a separate structure.
         self.hyperlinks[row][col] = url
@@ -1559,10 +1589,7 @@ class Worksheet(xmlwriter.XMLwriter):
 
         # Check that the string is < 32767 chars.
         if _utf16_len(raw_string) > self.xls_strmax:
-            warn(
-                "String length must be less than or equal to Excel's limit "
-                "of 32,767 characters in write_rich_string()."
-            )
+            self._warn_string_too_long("write_rich_string")
             return -2
 
         # Write a shared string or an in-line string in constant_memory mode.

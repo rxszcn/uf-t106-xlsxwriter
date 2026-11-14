@@ -8,6 +8,7 @@
 #
 
 import unittest
+import warnings
 
 from xlsxwriter.sharedstrings import SharedStringTable
 from xlsxwriter.worksheet import Worksheet
@@ -113,7 +114,13 @@ class TestRangeReturnValues(unittest.TestCase):
         got = worksheet.write_string(0, 0, "\U0001f600" * 16383 + "a")
         self.assertEqual(got, 0)
 
-        got = worksheet.write_string(1, 0, "\U0001f600" * 16384)
+        # The over-limit write warns, returns -2 and truncates the string.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            got = worksheet.write_string(1, 0, "\U0001f600" * 16384)
+            self.assertEqual(len(caught), 1)
+            self.assertIn("write_string()", str(caught[0].message))
+
         self.assertEqual(got, -2)
 
         # The string is truncated without splitting an emoji.
